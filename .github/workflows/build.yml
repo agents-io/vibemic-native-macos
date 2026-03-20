@@ -1,0 +1,52 @@
+name: Build VibeMic
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+  workflow_dispatch:
+
+jobs:
+  build:
+    runs-on: macos-14  # Apple Silicon runner
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Build release binary
+        run: swift build -c release
+
+      - name: Create .app bundle
+        run: |
+          APP_DIR="VibeMic.app/Contents"
+          mkdir -p "$APP_DIR/MacOS" "$APP_DIR/Resources"
+          cp .build/release/VibeMic "$APP_DIR/MacOS/VibeMic"
+          cp VibeMic/Resources/Info.plist "$APP_DIR/Info.plist"
+          cp VibeMic/Resources/VibeMic.entitlements "$APP_DIR/Resources/"
+
+      - name: Codesign (ad-hoc)
+        run: |
+          codesign --force --deep --sign - \
+            --entitlements VibeMic/Resources/VibeMic.entitlements \
+            VibeMic.app
+
+      - name: Create DMG
+        run: |
+          mkdir -p dmg-stage
+          cp -R VibeMic.app dmg-stage/
+          hdiutil create -volname "VibeMic" \
+            -srcfolder dmg-stage \
+            -ov -format UDZO \
+            VibeMic.dmg
+
+      - name: Upload .app artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VibeMic.app
+          path: VibeMic.app
+
+      - name: Upload DMG artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: VibeMic.dmg
+          path: VibeMic.dmg
