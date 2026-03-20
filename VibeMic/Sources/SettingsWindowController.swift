@@ -2,6 +2,12 @@ import Cocoa
 
 class SettingsWindowController: NSWindowController {
     private var apiKeyField: NSTextField!
+    private var useProxyButton: NSButton!
+    private var proxyBaseURLField: NSTextField!
+    private var proxyEmailField: NSTextField!
+    private var proxyPasswordField: NSSecureTextField!
+    private var proxyLoginButton: NSButton!
+    private var proxyStatusLabel: NSTextField!
     private var modelPopup: NSPopUpButton!
     private var languagePopup: NSPopUpButton!
     private var translatePopup: NSPopUpButton!
@@ -21,10 +27,12 @@ class SettingsWindowController: NSWindowController {
     private var accessibilityLabel: NSTextField!
     private var accessibilityButton: NSButton!
     private var accessibilityTimer: Timer?
+    private var proxyToken = ""
+    private var isLoggingIntoProxy = false
 
     init() {
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 520, height: 680),
+            contentRect: NSRect(x: 0, y: 0, width: 520, height: 820),
             styleMask: [.titled, .closable, .fullSizeContentView],
             backing: .buffered,
             defer: false
@@ -115,6 +123,36 @@ class SettingsWindowController: NSWindowController {
         generalCard.addArrangedSubview(generalStack)
         stack.addArrangedSubview(generalCard)
         generalCard.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -56).isActive = true
+
+        // ── VibeMic Cloud Card ──
+        let proxyCard = makeCard(title: "VibeMic Cloud")
+        let proxyStack = cardStack()
+
+        useProxyButton = NSButton(checkboxWithTitle: "Use VibeMic Cloud (no API key needed)", target: self, action: #selector(proxyModeToggled))
+        proxyStack.addArrangedSubview(useProxyButton)
+
+        proxyStack.addArrangedSubview(makeRow("Server URL", makeTextField(placeholder: VibeMicConfig.defaultProxyBaseURL, assign: &proxyBaseURLField)))
+        proxyStack.addArrangedSubview(makeRow("Email", makeTextField(placeholder: "you@example.com", assign: &proxyEmailField)))
+        proxyStack.addArrangedSubview(makeRow("Password", makeSecureField(assign: &proxyPasswordField)))
+
+        let loginRow = NSStackView()
+        loginRow.orientation = .horizontal
+        loginRow.spacing = 10
+
+        proxyLoginButton = NSButton(title: "Login", target: self, action: #selector(loginToProxy))
+        proxyLoginButton.bezelStyle = .rounded
+
+        proxyStatusLabel = NSTextField(labelWithString: "Not logged in")
+        proxyStatusLabel.font = .systemFont(ofSize: 12)
+        proxyStatusLabel.textColor = .secondaryLabelColor
+
+        loginRow.addArrangedSubview(proxyLoginButton)
+        loginRow.addArrangedSubview(proxyStatusLabel)
+        proxyStack.addArrangedSubview(makeRow("Account", loginRow))
+
+        proxyCard.addArrangedSubview(proxyStack)
+        stack.addArrangedSubview(proxyCard)
+        proxyCard.widthAnchor.constraint(equalTo: stack.widthAnchor, constant: -56).isActive = true
 
         // ── Auto-Insert Card ──
         let autoCard = makeCard(title: "Auto-Insert")
@@ -308,6 +346,15 @@ class SettingsWindowController: NSWindowController {
         return tf
     }
 
+    private func makeSecureField(assign field: inout NSSecureTextField!) -> NSSecureTextField {
+        let tf = NSSecureTextField()
+        tf.placeholderString = "Password"
+        tf.bezelStyle = .roundedBezel
+        tf.font = .systemFont(ofSize: 13)
+        field = tf
+        return tf
+    }
+
     private func makePopup(items: [String], assign popup: inout NSPopUpButton!) -> NSPopUpButton {
         let p = NSPopUpButton()
         p.addItems(withTitles: items)
@@ -320,6 +367,11 @@ class SettingsWindowController: NSWindowController {
     private func loadValues() {
         let config = ConfigManager.shared.config
         apiKeyField.stringValue = config.apiKey
+        useProxyButton.state = config.useProxy ? .on : .off
+        proxyBaseURLField.stringValue = config.proxyBaseURL.isEmpty ? VibeMicConfig.defaultProxyBaseURL : config.proxyBaseURL
+        proxyEmailField.stringValue = ""
+        proxyPasswordField.stringValue = ""
+        proxyToken = config.proxyToken
 
         if let idx = VibeMicConfig.availableModels.firstIndex(of: config.model) {
             modelPopup.selectItem(at: idx)
@@ -346,6 +398,9 @@ class SettingsWindowController: NSWindowController {
         hotkeyKeyCode = config.hotkeyKeyCode
         hotkeyModifiers = config.hotkeyModifiers
         hotkeyButton.title = config.hotkeyDisplayString
+
+        updateProxyLoginStatus()
+        updateProxyControls()
     }
 
     // MARK: - Actions
@@ -359,6 +414,134 @@ class SettingsWindowController: NSWindowController {
             ctx.duration = 0.2
             paraphraseDetailStack.animator().isHidden = paraphraseToggle.state != .on
         }
+    }
+
+    @objc private func proxyModeToggled() {
+        updateProxyControls()
+    }
+
+    private func updateProxyControls() {
+        let useProxy = useProxyButton.state == .on
+        apiKeyField.isEnabled = !useProxy
+        proxyBaseURLField.isEnabled = useProxy
+        proxyEmailField.isEnabled = useProxy
+        proxyPasswordField.isEnabled = useProxy
+        proxyLoginButton.isEnabled = useProxy && !isLoggingIntoProxy
+    }
+
+    private func updateProxyLoginStatus(isError: Bool = false, message: String? = nil) {
+        let isLoggedIn = !proxyToken.isEmpty
+        proxyStatusLabel.stringValue = isLoggedIn ? "Logged in" : "Not logged in"
+        proxyStatusLabel.textColor = isLoggedIn ? .systemGreen : (isError ? .systemRed : .secondaryLabelColor)
+        proxyStatusLabel.toolTip = message
+    }
+
+    private func normalizedProxyBaseURL() -> String {
+        var baseURL = proxyBaseURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if baseURL.isEmpty {
+            baseURL = VibeMicConfig.defaultProxyBaseURL
+        }
+        while baseURL.hasSuffix("/") {
+            baseURL.removeLast()
+        }
+        return baseURL
+    }
+
+    private func proxyURL(path: String) -> URL? {
+        URL(string: normalizedProxyBaseURL() + path)
+    }
+
+    private func errorMessage(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        if let errorInfo = json["error"] as? [String: Any],
+           let message = errorInfo["message"] as? String {
+            return message
+        }
+        if let errorMessage = json["error"] as? String {
+            return errorMessage
+        }
+        if let message = json["message"] as? String {
+            return message
+        }
+        return nil
+    }
+
+    @objc private func loginToProxy() {
+        let email = proxyEmailField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let password = proxyPasswordField.stringValue
+
+        guard !email.isEmpty, !password.isEmpty else {
+            updateProxyLoginStatus(isError: true, message: "Enter email and password.")
+            return
+        }
+        guard let url = proxyURL(path: "/auth/login") else {
+            updateProxyLoginStatus(isError: true, message: "Invalid server URL.")
+            return
+        }
+
+        proxyBaseURLField.stringValue = normalizedProxyBaseURL()
+        isLoggingIntoProxy = true
+        proxyLoginButton.title = "Logging in..."
+        updateProxyControls()
+        updateProxyLoginStatus(message: nil)
+
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+        request.httpBody = try? JSONSerialization.data(withJSONObject: [
+            "email": email,
+            "password": password,
+        ])
+
+        URLSession.shared.dataTask(with: request) { [weak self] data, response, error in
+            DispatchQueue.main.async {
+                guard let self = self else { return }
+
+                self.isLoggingIntoProxy = false
+                self.proxyLoginButton.title = "Login"
+
+                if let error = error {
+                    self.updateProxyLoginStatus(isError: true, message: error.localizedDescription)
+                    self.updateProxyControls()
+                    return
+                }
+
+                guard let data = data else {
+                    self.updateProxyLoginStatus(isError: true, message: "No response from server.")
+                    self.updateProxyControls()
+                    return
+                }
+
+                let statusCode = (response as? HTTPURLResponse)?.statusCode ?? 0
+                guard (200..<300).contains(statusCode) else {
+                    self.updateProxyLoginStatus(isError: true, message: self.errorMessage(from: data) ?? "Login failed.")
+                    self.updateProxyControls()
+                    return
+                }
+
+                guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let accessToken = json["access_token"] as? String,
+                      !accessToken.isEmpty
+                else {
+                    self.updateProxyLoginStatus(isError: true, message: "Invalid login response.")
+                    self.updateProxyControls()
+                    return
+                }
+
+                self.proxyToken = accessToken
+                self.proxyPasswordField.stringValue = ""
+                self.updateProxyLoginStatus()
+                self.updateProxyControls()
+
+                var savedConfig = ConfigManager.shared.config
+                savedConfig.proxyBaseURL = self.normalizedProxyBaseURL()
+                savedConfig.proxyToken = accessToken
+                ConfigManager.shared.save(savedConfig)
+            }
+        }.resume()
     }
 
     private func updateAccessibilityStatus() {
@@ -471,7 +654,10 @@ class SettingsWindowController: NSWindowController {
             translateTo: {
                 let idx = translatePopup.indexOfSelectedItem
                 return idx >= 0 ? VibeMicConfig.translateLanguages[idx].code : ""
-            }()
+            }(),
+            useProxy: useProxyButton.state == .on,
+            proxyBaseURL: normalizedProxyBaseURL(),
+            proxyToken: proxyToken
         )
 
         ConfigManager.shared.save(newConfig)

@@ -3,6 +3,9 @@ import AppKit
 
 struct VibeMicConfig: Codable {
     var apiKey: String
+    var useProxy: Bool
+    var proxyBaseURL: String
+    var proxyToken: String
     var model: String
     var language: String
     var prompt: String
@@ -19,18 +22,26 @@ struct VibeMicConfig: Codable {
          temperature: Double, responseFormat: String, paraphraseEnabled: Bool,
          paraphrasePrompt: String, paraphraseModel: String,
          hotkeyKeyCode: UInt16 = 9, hotkeyModifiers: UInt = 786432,
-         translateTo: String = "") {
+         translateTo: String = "", useProxy: Bool = false,
+         proxyBaseURL: String = VibeMicConfig.defaultProxyBaseURL,
+         proxyToken: String = "") {
         self.apiKey = apiKey; self.model = model; self.language = language
         self.prompt = prompt; self.temperature = temperature
         self.responseFormat = responseFormat; self.paraphraseEnabled = paraphraseEnabled
         self.paraphrasePrompt = paraphrasePrompt; self.paraphraseModel = paraphraseModel
         self.hotkeyKeyCode = hotkeyKeyCode; self.hotkeyModifiers = hotkeyModifiers
         self.translateTo = translateTo
+        self.useProxy = useProxy
+        self.proxyBaseURL = proxyBaseURL
+        self.proxyToken = proxyToken
     }
 
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        useProxy = try c.decodeIfPresent(Bool.self, forKey: .useProxy) ?? false
+        proxyBaseURL = try c.decodeIfPresent(String.self, forKey: .proxyBaseURL) ?? VibeMicConfig.defaultProxyBaseURL
+        proxyToken = try c.decodeIfPresent(String.self, forKey: .proxyToken) ?? ""
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? "gpt-4o-transcribe"
         language = try c.decodeIfPresent(String.self, forKey: .language) ?? ""
         prompt = try c.decodeIfPresent(String.self, forKey: .prompt) ?? ""
@@ -43,6 +54,8 @@ struct VibeMicConfig: Codable {
         hotkeyModifiers = try c.decodeIfPresent(UInt.self, forKey: .hotkeyModifiers) ?? 786432
         translateTo = try c.decodeIfPresent(String.self, forKey: .translateTo) ?? ""
     }
+
+    static let defaultProxyBaseURL = "https://api.vibemic.app"
 
     static let translateLanguages: [(name: String, code: String)] = [
         ("None", ""),

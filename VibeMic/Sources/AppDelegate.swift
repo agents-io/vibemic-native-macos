@@ -32,7 +32,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         let config = ConfigManager.shared.config
         hotkey.register(keyCode: UInt32(config.hotkeyKeyCode), modifiers: UInt32(config.hotkeyModifiers))
 
-        if ConfigManager.shared.config.apiKey.isEmpty {
+        if !config.useProxy && config.apiKey.isEmpty {
             sendNotification(title: "VibeMic", body: "No API key. Right-click menu bar icon → Settings.")
         }
 
@@ -140,15 +140,15 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
         let size = (try? FileManager.default.attributesOfItem(atPath: audioURL.path)[.size] as? Int) ?? 0
         Log.d("Audio file: \(audioURL.path), size: \(size)")
-        Log.d("API key loaded: \(ConfigManager.shared.config.apiKey.isEmpty ? "NO" : "YES")")
+        let currentConfig = ConfigManager.shared.config
+        Log.d("Transcription mode: \(currentConfig.useProxy ? "proxy" : "direct")")
         isTranscribing = true
         statusBar.setState(.transcribing)
         overlay.updateState("Transcribing", color: NSColor.systemOrange)
 
-        let config = ConfigManager.shared.config
         transcriber.transcribe(
             fileURL: audioURL,
-            config: config,
+            config: currentConfig,
             onStateChange: { [weak self] state in
                 DispatchQueue.main.async {
                     if state == "paraphrasing" {

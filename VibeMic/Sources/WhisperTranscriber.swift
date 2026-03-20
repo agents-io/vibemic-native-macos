@@ -9,15 +9,23 @@ class WhisperTranscriber {
         onStateChange: @escaping (String) -> Void,
         completion: @escaping (Result<(text: String, original: String?), Error>) -> Void
     ) {
-        guard !config.apiKey.isEmpty else {
-            completion(.failure(TranscriberError.noApiKey))
-            return
+        if config.useProxy {
+            guard !config.proxyToken.isEmpty else {
+                completion(.failure(TranscriberError.notLoggedIn))
+                return
+            }
+        } else {
+            guard !config.apiKey.isEmpty else {
+                completion(.failure(TranscriberError.noApiKey))
+                return
+            }
         }
 
         DispatchQueue.global(qos: .userInitiated).async {
             do {
-                Log.d("Calling Whisper API...")
-                let transcript = try self.sendToWhisper(fileURL: fileURL, config: config)
+                let transcript = try config.useProxy
+                    ? self.sendToProxyTranscription(fileURL: fileURL, config: config)
+                    : self.sendToWhisper(fileURL: fileURL, config: config)
                 Log.d("Whisper returned: \(transcript.prefix(100))")
                 let trimmed = transcript.trimmingCharacters(in: .whitespacesAndNewlines)
                 guard !trimmed.isEmpty else {
@@ -45,6 +53,7 @@ class WhisperTranscriber {
     }
 
     private func sendToWhisper(fileURL: URL, config: VibeMicConfig) throws -> String {
+        Log.d("Calling Whisper API...")
         let url = URL(string: "https://api.openai.com/v1/audio/transcriptions")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -72,14 +81,10 @@ class WhisperTranscriber {
         body.append("--\(boundary)--\r\n".data(using: .utf8)!)
         request.httpBody = body
 
-        let (data, _) = try syncRequest(request)
+        let (data, response) = try syncRequest(request)
+        try validateResponse(data: data, response: response)
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
             throw TranscriberError.invalidResponse
-        }
-
-        if let errorInfo = json["error"] as? [String: Any],
-           let message = errorInfo["message"] as? String {
-            throw TranscriberError.apiError(message)
         }
 
         guard let text = json["text"] as? String else {
@@ -88,7 +93,49 @@ class WhisperTranscriber {
         return text
     }
 
+    private func sendToProxyTranscription(fileURL: URL, config: VibeMicConfig) throws -> String {
+        Log.d("Calling proxy transcription API...")
+        let url = try proxyURL(baseURL: config.proxyBaseURL, path: "/api/transcribe")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.proxyToken)", forHTTPHeaderField: "Authorization")
+        request.timeoutInterval = 60
+
+        let boundary = UUID().uuidString
+        request.setValue("multipart/form-data; boundary=\(boundary)", forHTTPHeaderField: "Content-Type")
+
+        var body = Data()
+        let audioData = try Data(contentsOf: fileURL)
+        body.appendMultipart(boundary: boundary, name: "file", filename: "recording.wav", mimeType: "audio/wav", data: audioData)
+        if !config.language.isEmpty {
+            body.appendMultipart(boundary: boundary, name: "language", value: config.language)
+        }
+        if !config.prompt.isEmpty {
+            body.appendMultipart(boundary: boundary, name: "prompt", value: config.prompt)
+        }
+        body.append("--\(boundary)--\r\n".data(using: .utf8)!)
+        request.httpBody = body
+
+        let (data, response) = try syncRequest(request)
+        try validateResponse(data: data, response: response)
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let text = json["text"] as? String
+        else {
+            throw TranscriberError.invalidResponse
+        }
+
+        return text
+    }
+
     private func paraphrase(text: String, config: VibeMicConfig) throws -> String {
+        if config.useProxy {
+            return try proxyParaphrase(text: text, config: config)
+        }
+        return try directParaphrase(text: text, config: config)
+    }
+
+    private func directParaphrase(text: String, config: VibeMicConfig) throws -> String {
         let url = URL(string: "https://api.openai.com/v1/chat/completions")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
@@ -96,11 +143,7 @@ class WhisperTranscriber {
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.timeoutInterval = 30
 
-        // Prepend "Translate to X." to system prompt if set
-        var systemPrompt = config.paraphrasePrompt
-        if !config.translateTo.isEmpty {
-            systemPrompt = "Translate the output to \(config.translateTo). \(systemPrompt)"
-        }
+        let systemPrompt = paraphrasePrompt(for: config)
 
         let payload: [String: Any] = [
             "model": config.paraphraseModel,
@@ -113,7 +156,8 @@ class WhisperTranscriber {
         Log.d("Paraphrase system prompt: \(systemPrompt.prefix(100))")
 
         request.httpBody = try JSONSerialization.data(withJSONObject: payload)
-        let (data, _) = try syncRequest(request)
+        let (data, response) = try syncRequest(request)
+        try validateResponse(data: data, response: response)
 
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
               let choices = json["choices"] as? [[String: Any]],
@@ -125,6 +169,81 @@ class WhisperTranscriber {
         }
 
         return content.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func proxyParaphrase(text: String, config: VibeMicConfig) throws -> String {
+        let url = try proxyURL(baseURL: config.proxyBaseURL, path: "/api/paraphrase")
+        var request = URLRequest(url: url)
+        request.httpMethod = "POST"
+        request.setValue("Bearer \(config.proxyToken)", forHTTPHeaderField: "Authorization")
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.timeoutInterval = 30
+
+        let payload: [String: Any] = [
+            "text": text,
+            "prompt": paraphrasePrompt(for: config),
+            "model": "gpt-4o-mini",
+        ]
+
+        request.httpBody = try JSONSerialization.data(withJSONObject: payload)
+        let (data, response) = try syncRequest(request)
+        try validateResponse(data: data, response: response)
+
+        guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+              let output = json["text"] as? String
+        else {
+            throw TranscriberError.invalidResponse
+        }
+
+        return output.trimmingCharacters(in: .whitespacesAndNewlines)
+    }
+
+    private func paraphrasePrompt(for config: VibeMicConfig) -> String {
+        if config.translateTo.isEmpty {
+            return config.paraphrasePrompt
+        }
+        return "Translate the output to \(config.translateTo). \(config.paraphrasePrompt)"
+    }
+
+    private func proxyURL(baseURL: String, path: String) throws -> URL {
+        var normalized = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.isEmpty {
+            normalized = VibeMicConfig.defaultProxyBaseURL
+        }
+        while normalized.hasSuffix("/") {
+            normalized.removeLast()
+        }
+        guard let url = URL(string: normalized + path) else {
+            throw TranscriberError.invalidProxyURL
+        }
+        return url
+    }
+
+    private func validateResponse(data: Data, response: URLResponse) throws {
+        guard let http = response as? HTTPURLResponse else { return }
+        guard (200..<300).contains(http.statusCode) else {
+            if let message = errorMessage(from: data) {
+                throw TranscriberError.apiError(message)
+            }
+            throw TranscriberError.apiError("Request failed (\(http.statusCode))")
+        }
+    }
+
+    private func errorMessage(from data: Data) -> String? {
+        guard let json = try? JSONSerialization.jsonObject(with: data) as? [String: Any] else {
+            return nil
+        }
+        if let errorInfo = json["error"] as? [String: Any],
+           let message = errorInfo["message"] as? String {
+            return message
+        }
+        if let errorMessage = json["error"] as? String {
+            return errorMessage
+        }
+        if let message = json["message"] as? String {
+            return message
+        }
+        return nil
     }
 
     private func syncRequest(_ request: URLRequest) throws -> (Data, URLResponse) {
@@ -150,15 +269,19 @@ class WhisperTranscriber {
 
     enum TranscriberError: LocalizedError {
         case noApiKey
+        case notLoggedIn
         case noResponse
         case invalidResponse
+        case invalidProxyURL
         case apiError(String)
 
         var errorDescription: String? {
             switch self {
             case .noApiKey: return "No API key. Right-click → Settings."
+            case .notLoggedIn: return "Not logged in. Open Settings and sign in."
             case .noResponse: return "No response from API"
             case .invalidResponse: return "Invalid API response"
+            case .invalidProxyURL: return "Invalid server URL"
             case .apiError(let msg): return msg
             }
         }
