@@ -1,5 +1,9 @@
 # VibeMic Native (macOS)
 
+[中文版](#中文) | English
+
+![VibeMic](vibemic-slide.png)
+
 System-wide voice-to-text for macOS. Press a hotkey to record, release to transcribe with OpenAI Whisper and instantly paste into any app.
 
 ## How it works
@@ -86,9 +90,43 @@ By default, VibeMic copies transcribed text to your clipboard. To enable automat
 
 ## Related
 
-- [VibeMic VS Code Extension](https://github.com/ithiria894/VibeMic) — voice-to-text inside VS Code
-- [VibeMic Native Ubuntu](https://github.com/ithiria894/vibemic-native-ubuntu) — Ubuntu/Linux version
+- [VibeMic Native Ubuntu](https://github.com/agents-io/vibemic-native-ubuntu) — Ubuntu/Linux version
 
 ## License
 
 MIT
+
+---
+
+<a name="中文"></a>
+## 中文
+
+![VibeMic](vibemic-slide-zh.png)
+
+全系統語音轉文字 macOS 應用。按快捷鍵錄音，鬆開後自動用 OpenAI Whisper 轉錄，並即時貼上到任何應用程式。
+
+### 運作方式
+
+1. 按 `Ctrl+Option+V` — 開始錄音，浮動提示出現
+2. 再按一次（或點擊 STOP）— 音訊傳送至 OpenAI Whisper
+3. 轉錄文字自動貼上到你正在使用的應用
+
+### 功能特色
+
+- **原生 Swift 應用** — 無 Python、無 Electron、無依賴
+- **Menu Bar + Dock** — 閒置、錄音中、轉錄中、改寫中狀態
+- **全域快捷鍵** — 可在設定中自訂（預設：Ctrl+Option+V）
+- **AI 改寫** — 將轉錄內容改寫成自然的 Slack/工作聊天風格
+- **翻譯** — 輸出可翻譯為 15+ 種語言
+- **轉錄記錄** — 瀏覽、複製、刪除過往的轉錄
+- **多語言支援** — 廣東話、英文、普通話、日文等 97+ 種語言
+
+### 快速開始
+
+```bash
+git clone https://github.com/agents-io/vibemic-native-macos.git
+cd vibemic-native-macos
+swift build -c release
+```
+
+詳細建置步驟請參考上方英文版。
