@@ -5,7 +5,8 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     private var recorder: AudioRecorder!
     private var transcriber: WhisperTranscriber!
     private var isTranscribing = false
-    private var settingsWindow: SettingsWindowController?
+    private var settingsWindow: UserSettingsWindowController?
+    private var developerSettingsWindow: SettingsWindowController?
     private var historyWindow: HistoryWindowController?
     private var hotkey: GlobalHotkey!
     private var overlay: RecordingOverlay!
@@ -186,9 +187,25 @@ class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func openSettings() {
         if settingsWindow == nil {
-            settingsWindow = SettingsWindowController()
+            settingsWindow = UserSettingsWindowController(onOpenDeveloperMode: { [weak self] in
+                self?.openDeveloperSettings()
+            })
         }
         settingsWindow?.showWindow(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    private func openDeveloperSettings() {
+        var config = ConfigManager.shared.config
+        if !config.developerMode {
+            config.developerMode = true
+            ConfigManager.shared.save(config)
+        }
+
+        if developerSettingsWindow == nil {
+            developerSettingsWindow = SettingsWindowController()
+        }
+        developerSettingsWindow?.showWindow(nil)
         NSApp.activate(ignoringOtherApps: true)
     }
 

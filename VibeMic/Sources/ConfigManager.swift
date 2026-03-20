@@ -6,6 +6,8 @@ struct VibeMicConfig: Codable {
     var useProxy: Bool
     var proxyBaseURL: String
     var proxyToken: String
+    var proxyEmail: String
+    var developerMode: Bool
     var model: String
     var language: String
     var prompt: String
@@ -24,7 +26,8 @@ struct VibeMicConfig: Codable {
          hotkeyKeyCode: UInt16 = 9, hotkeyModifiers: UInt = 786432,
          translateTo: String = "", useProxy: Bool = false,
          proxyBaseURL: String = VibeMicConfig.defaultProxyBaseURL,
-         proxyToken: String = "") {
+         proxyToken: String = "", proxyEmail: String = "",
+         developerMode: Bool = false) {
         self.apiKey = apiKey; self.model = model; self.language = language
         self.prompt = prompt; self.temperature = temperature
         self.responseFormat = responseFormat; self.paraphraseEnabled = paraphraseEnabled
@@ -34,6 +37,8 @@ struct VibeMicConfig: Codable {
         self.useProxy = useProxy
         self.proxyBaseURL = proxyBaseURL
         self.proxyToken = proxyToken
+        self.proxyEmail = proxyEmail
+        self.developerMode = developerMode
     }
 
     init(from decoder: Decoder) throws {
@@ -42,6 +47,8 @@ struct VibeMicConfig: Codable {
         useProxy = try c.decodeIfPresent(Bool.self, forKey: .useProxy) ?? false
         proxyBaseURL = try c.decodeIfPresent(String.self, forKey: .proxyBaseURL) ?? VibeMicConfig.defaultProxyBaseURL
         proxyToken = try c.decodeIfPresent(String.self, forKey: .proxyToken) ?? ""
+        proxyEmail = try c.decodeIfPresent(String.self, forKey: .proxyEmail) ?? ""
+        developerMode = try c.decodeIfPresent(Bool.self, forKey: .developerMode) ?? false
         model = try c.decodeIfPresent(String.self, forKey: .model) ?? "gpt-4o-transcribe"
         language = try c.decodeIfPresent(String.self, forKey: .language) ?? ""
         prompt = try c.decodeIfPresent(String.self, forKey: .prompt) ?? ""
@@ -225,15 +232,44 @@ class ConfigManager {
         if config.apiKey.isEmpty, let envKey = ProcessInfo.processInfo.environment["OPENAI_API_KEY"] {
             config.apiKey = envKey
         }
+
+        config = normalized(config)
     }
 
     func save(_ newConfig: VibeMicConfig) {
-        config = newConfig
+        config = normalized(newConfig, preserving: config)
         let encoder = JSONEncoder()
         encoder.outputFormatting = [.prettyPrinted, .sortedKeys]
         if let data = try? encoder.encode(config) {
             try? data.write(to: configURL)
         }
+    }
+
+    private func normalized(_ input: VibeMicConfig, preserving current: VibeMicConfig? = nil) -> VibeMicConfig {
+        var normalized = input
+
+        if let current {
+            if current.developerMode && !normalized.developerMode {
+                normalized.developerMode = true
+            }
+
+            if normalized.proxyEmail.isEmpty,
+               !current.proxyEmail.isEmpty,
+               normalized.proxyToken == current.proxyToken {
+                normalized.proxyEmail = current.proxyEmail
+            }
+        }
+
+        normalized.proxyBaseURL = normalized.proxyBaseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if normalized.proxyBaseURL.isEmpty {
+            normalized.proxyBaseURL = VibeMicConfig.defaultProxyBaseURL
+        }
+
+        if !normalized.developerMode {
+            normalized.useProxy = true
+        }
+
+        return normalized
     }
 
     private func loadEnvApiKey() -> String {
