@@ -2,6 +2,8 @@ import Cocoa
 
 class SettingsWindowController: NSWindowController {
     private var apiKeyField: NSTextField!
+    private var providerPopup: NSPopUpButton!
+    private var transcriptionApiKeyField: NSTextField!
     private var useProxyButton: NSButton!
     private var proxyBaseURLField: NSTextField!
     private var proxyEmailField: NSTextField!
@@ -82,6 +84,14 @@ class SettingsWindowController: NSWindowController {
         let generalStack = cardStack()
 
         generalStack.addArrangedSubview(makeRow("API Key", makeTextField(placeholder: "sk-proj-...", assign: &apiKeyField)))
+
+        let providerItems = VibeMicConfig.providers.map { $0.name }
+        let providerRow = makePopup(items: providerItems, assign: &providerPopup)
+        providerPopup.target = self
+        providerPopup.action = #selector(providerChanged)
+        generalStack.addArrangedSubview(makeRow("Provider", providerRow))
+
+        generalStack.addArrangedSubview(makeRow("Provider API Key", makeTextField(placeholder: "Provider-specific key (optional)", assign: &transcriptionApiKeyField)))
 
         let modelRow = makePopup(items: VibeMicConfig.availableModels, assign: &modelPopup)
         generalStack.addArrangedSubview(makeRow("Model", modelRow))
@@ -373,7 +383,13 @@ class SettingsWindowController: NSWindowController {
         proxyPasswordField.stringValue = ""
         proxyToken = config.proxyToken
 
-        if let idx = VibeMicConfig.availableModels.firstIndex(of: config.model) {
+        if let idx = VibeMicConfig.providers.firstIndex(where: { $0.key == config.transcriptionProvider }) {
+            providerPopup.selectItem(at: idx)
+        }
+        transcriptionApiKeyField.stringValue = config.transcriptionApiKey
+
+        providerChanged()
+        if let idx = config.modelsForProvider.firstIndex(of: config.model) {
             modelPopup.selectItem(at: idx)
         }
         if let idx = VibeMicConfig.availableLanguages.firstIndex(where: { $0.code == config.language }) {
@@ -414,6 +430,13 @@ class SettingsWindowController: NSWindowController {
             ctx.duration = 0.2
             paraphraseDetailStack.animator().isHidden = paraphraseToggle.state != .on
         }
+    }
+
+    @objc private func providerChanged() {
+        let providerKey = VibeMicConfig.providers[providerPopup.indexOfSelectedItem].key
+        let models = VibeMicConfig.providerModels[providerKey] ?? VibeMicConfig.availableModels
+        modelPopup.removeAllItems()
+        modelPopup.addItems(withTitles: models)
     }
 
     @objc private func proxyModeToggled() {
@@ -639,6 +662,8 @@ class SettingsWindowController: NSWindowController {
         let langIndex = languagePopup.indexOfSelectedItem
         let langCode = langIndex >= 0 ? VibeMicConfig.availableLanguages[langIndex].code : ""
 
+        let providerKey = VibeMicConfig.providers[providerPopup.indexOfSelectedItem].key
+
         let newConfig = VibeMicConfig(
             apiKey: apiKeyField.stringValue.trimmingCharacters(in: .whitespaces),
             model: modelPopup.titleOfSelectedItem ?? "gpt-4o-transcribe",
@@ -657,7 +682,9 @@ class SettingsWindowController: NSWindowController {
             }(),
             useProxy: useProxyButton.state == .on,
             proxyBaseURL: normalizedProxyBaseURL(),
-            proxyToken: proxyToken
+            proxyToken: proxyToken,
+            transcriptionProvider: providerKey,
+            transcriptionApiKey: transcriptionApiKeyField.stringValue.trimmingCharacters(in: .whitespaces)
         )
 
         ConfigManager.shared.save(newConfig)

@@ -3,6 +3,8 @@ import AppKit
 
 struct VibeMicConfig: Codable {
     var apiKey: String
+    var transcriptionProvider: String
+    var transcriptionApiKey: String
     var useProxy: Bool
     var proxyBaseURL: String
     var proxyToken: String
@@ -27,8 +29,12 @@ struct VibeMicConfig: Codable {
          translateTo: String = "", useProxy: Bool = false,
          proxyBaseURL: String = VibeMicConfig.defaultProxyBaseURL,
          proxyToken: String = "", proxyEmail: String = "",
-         developerMode: Bool = false) {
+         developerMode: Bool = false,
+         transcriptionProvider: String = "openai",
+         transcriptionApiKey: String = "") {
         self.apiKey = apiKey; self.model = model; self.language = language
+        self.transcriptionProvider = transcriptionProvider
+        self.transcriptionApiKey = transcriptionApiKey
         self.prompt = prompt; self.temperature = temperature
         self.responseFormat = responseFormat; self.paraphraseEnabled = paraphraseEnabled
         self.paraphrasePrompt = paraphrasePrompt; self.paraphraseModel = paraphraseModel
@@ -44,6 +50,8 @@ struct VibeMicConfig: Codable {
     init(from decoder: Decoder) throws {
         let c = try decoder.container(keyedBy: CodingKeys.self)
         apiKey = try c.decodeIfPresent(String.self, forKey: .apiKey) ?? ""
+        transcriptionProvider = try c.decodeIfPresent(String.self, forKey: .transcriptionProvider) ?? "openai"
+        transcriptionApiKey = try c.decodeIfPresent(String.self, forKey: .transcriptionApiKey) ?? ""
         useProxy = try c.decodeIfPresent(Bool.self, forKey: .useProxy) ?? false
         proxyBaseURL = try c.decodeIfPresent(String.self, forKey: .proxyBaseURL) ?? VibeMicConfig.defaultProxyBaseURL
         proxyToken = try c.decodeIfPresent(String.self, forKey: .proxyToken) ?? ""
@@ -139,11 +147,38 @@ struct VibeMicConfig: Codable {
         return map[keyCode] ?? "Key\(keyCode)"
     }
 
+    static let providers: [(key: String, name: String, baseURL: String)] = [
+        ("openai", "OpenAI", "https://api.openai.com/v1"),
+        ("groq", "Groq", "https://api.groq.com/openai/v1"),
+        ("custom", "Custom OpenAI-compatible", ""),
+    ]
+
+    static let providerModels: [String: [String]] = [
+        "openai": ["gpt-4o-transcribe", "gpt-4o-mini-transcribe", "whisper-1"],
+        "groq": ["whisper-large-v3-turbo", "whisper-large-v3"],
+        "custom": ["gpt-4o-transcribe", "whisper-1", "whisper-large-v3-turbo"],
+    ]
+
     static let availableModels = [
         "whisper-1",
         "gpt-4o-transcribe",
         "gpt-4o-mini-transcribe",
     ]
+
+    var resolvedTranscriptionBaseURL: String {
+        if let provider = Self.providers.first(where: { $0.key == transcriptionProvider }) {
+            return provider.baseURL
+        }
+        return "https://api.openai.com/v1"
+    }
+
+    var resolvedTranscriptionApiKey: String {
+        transcriptionApiKey.isEmpty ? apiKey : transcriptionApiKey
+    }
+
+    var modelsForProvider: [String] {
+        Self.providerModels[transcriptionProvider] ?? Self.availableModels
+    }
 
     static let paraphraseModels = [
         "gpt-4o-mini",

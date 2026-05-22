@@ -15,7 +15,7 @@ class WhisperTranscriber {
                 return
             }
         } else {
-            guard !config.apiKey.isEmpty else {
+            guard !config.resolvedTranscriptionApiKey.isEmpty else {
                 completion(.failure(TranscriberError.noApiKey))
                 return
             }
@@ -53,11 +53,15 @@ class WhisperTranscriber {
     }
 
     private func sendToWhisper(fileURL: URL, config: VibeMicConfig) throws -> String {
-        Log.d("Calling Whisper API...")
-        let url = URL(string: "https://api.openai.com/v1/audio/transcriptions")!
+        let baseURL = config.resolvedTranscriptionBaseURL.isEmpty
+            ? "https://api.openai.com/v1"
+            : config.resolvedTranscriptionBaseURL
+        let apiKey = config.resolvedTranscriptionApiKey
+        Log.d("Calling Whisper API at \(baseURL) provider=\(config.transcriptionProvider)...")
+        let url = URL(string: "\(baseURL)/audio/transcriptions")!
         var request = URLRequest(url: url)
         request.httpMethod = "POST"
-        request.setValue("Bearer \(config.apiKey)", forHTTPHeaderField: "Authorization")
+        request.setValue("Bearer \(apiKey)", forHTTPHeaderField: "Authorization")
         request.timeoutInterval = 60
 
         let boundary = UUID().uuidString
